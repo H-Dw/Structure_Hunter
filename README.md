@@ -47,11 +47,16 @@ Clone the repository and install the required dependencies:
 Due to license restrictions, this we cannot provide signalp5 directly. Please download from https://services.healthtech.dtu.dk/service.php?SignalP-5.0.
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/H-Dw/Structure_Hunter.git
+cd Structure_Hunter
+```
+
+```bash
+conda env create -f environment.yml
 # NOTE: The SignalP need to be installed manually
 ```
 
-OR you can install following dependencies using conda:
+OR you can install following dependencies directly:
 ```bash
 pip install fair-esm
 conda install -c conda-forge -c bioconda foldseek seqkit dssp pandas
