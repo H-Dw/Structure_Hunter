@@ -66,12 +66,12 @@ Install SignalP v5.0b after downloading signalp-5.0b.Linux.tar.gz:
 ```bash
 tar -vxf signalp-5.0b.Linux.tar.gz
 ```
-Then, you can write your install path into the ~/.bashrc, so that system can identify signal directly. 
+Then, you can write your install path into the ~/.bashrc, so that system can identify signalp directly. 
 ```bash
 vim ~/.bashrc
 
 # Add follow command and save using vim
-export PATH="$PATH:/path/to/signalp-5.0b/bin" # /path/to/: Install path of signal5
+export PATH="$PATH:/path/to/signalp-5.0b/bin" # /path/to/: Install path of signalp5
 
 # Reactivate system
 source ~/.bashrc
@@ -95,7 +95,7 @@ export species="Ng"
 # NOTE: 'protein.faa' is the input proteome downloaded from NCBI, it need to be replaced by your own proteome path
 
 # 1. Run SignalP (Gram-negative mode)
-signalp5 -fasta examples/protein.faa -format short -org gram- -prefix ${species}Sign
+signalp -fasta examples/protein.faa -format short -org gram- -prefix ${species}Sign
 
 # 2. Extract IDs with detected signal peptides
 awk -F "\t" '$7 ~ /[0-9]+/ { print $1 }' examples/${species}Sign_summary.signalp5 > examples/${species}Sign.txt
