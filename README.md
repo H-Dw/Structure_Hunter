@@ -62,6 +62,25 @@ pip install fair-esm
 conda install -c conda-forge -c bioconda foldseek seqkit dssp pandas
 ```
 
+Install SignalP v5.0b after downloading signalp-5.0b.Linux.tar.gz:
+```bash
+tar -vxf signalp-5.0b.Linux.tar.gz
+```
+Then, you can write your install path into the ~/.bashrc, so that system can identify signal directly. 
+```bash
+vim ~/.bashrc
+
+# Add follow command and save using vim
+export PATH="$PATH:/path/to/signalp-5.0b/bin" # /path/to/: Install path of signal5
+
+# Reactivate system
+source ~/.bashrc
+```
+OR you can modify the running command by adding 'bin' path of signalp, likes:
+```bash
+/path/to/signalp-5.0b/bin/signalp5 ...
+```
+
 ## Usage
 
 We used NgSignPDB as an example (processed by ESMFold prediction), the same process can be applied to EcSignPDB, McSignPDB, and NmSignPDB.
