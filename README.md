@@ -96,6 +96,7 @@ export species="Ng"
 
 # 1. Run SignalP (Gram-negative mode)
 signalp -fasta examples/protein.faa -format short -org gram- -prefix ${species}Sign
+mv ${species}Sign_summary.signalp5 examples/${species}Sign_summary.signalp5
 
 # 2. Extract IDs with detected signal peptides
 awk -F "\t" '$7 ~ /[0-9]+/ { print $1 }' examples/${species}Sign_summary.signalp5 > examples/${species}Sign.txt
