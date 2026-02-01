@@ -1,4 +1,4 @@
-name: hunter-gpu
+name: hunter
 channels:
   - pytorch
   - nvidia
