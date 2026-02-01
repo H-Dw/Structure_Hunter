@@ -1,19 +1,13 @@
 # Refer to https://colab.research.google.com/github/sokrypton/ColabFold/blob/main/ESMFold.ipynb
 
-from string import ascii_uppercase, ascii_lowercase
-import hashlib, re, os
+import re, os
 import numpy as np
 import esm
 from jax.tree_util import tree_map #pip install jax,jaxlib
 from scipy.special import softmax
 from Bio import SeqIO
-import sys
-import gc
-import zipfile
-import subprocess
 
 import torch
-import torch.nn as nn
 import argparse
 import time
 
@@ -66,9 +60,6 @@ def runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles):
     #nvidia-smi
     model = torch.nn.DataParallel(esm.pretrained.esmfold_v1(), device_ids=device_ids)
     model = model.eval().cuda()
-    # model = nn.DataParallel(model.eval(), visible_devices).cuda()
-    # nn.DataParallel(model.eval().cuda(), visible_devices)
-    # nn.DataParallel(model.eval().cuda(), device_ids=[1])
 
     # model.module.set_chunk_size(128)
     # optimized for different GPU 128, 64, 32
@@ -103,17 +94,12 @@ def runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles):
   # print(f'ptm: {ptm:.3f} plddt: {plddt:.3f}') # before1017
 
 
-  # os.system(f"mkdir -p esmfoldResult/{ID}")
-  # prefix = f"esmfoldResult/{ID}/{ID}"
   prefix = f"{store_folder}/{ID}"
-  # np.savetxt(f"{prefix}.pae.txt",O["pae"],"%.3f")
   with open(f"{prefix}.pdb","w") as out:
     out.write(pdb_str)
-  # return ID
 
 def main(args):
   if args.cpu:
-      device = torch.device('cpu')
       deviceC = "cpu"
       device_ids = []
   elif args.gpu:
@@ -133,7 +119,6 @@ def main(args):
         print("Calculated on GPU 1 (default) when using GPU.")
   else:
     print("Use CPU as default.")
-    device = torch.device('cpu')
     deviceC = "cpu"
     device_ids = []
 
@@ -167,7 +152,10 @@ def main(args):
     recycles = 3
 
   for jobname, sequence in sorted_sequences:
-    runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles)
+    try:
+      runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles)
+    except Exception as e:
+      print(f"Error occurred while processing {jobname}: {e}")
 
 
 if __name__ == "__main__":

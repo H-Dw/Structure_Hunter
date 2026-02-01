@@ -1,4 +1,4 @@
 *.log
 tmp
-*SignPDB
-foldseek*
+data
+esmfold_3B_v1.pt
