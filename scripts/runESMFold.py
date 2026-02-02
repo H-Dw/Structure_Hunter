@@ -3,7 +3,7 @@
 import re, os
 import numpy as np
 import esm
-from jax.tree_util import tree_map #pip install jax,jaxlib
+# from jax.tree_util import tree_map #pip install jax,jaxlib
 from scipy.special import softmax
 from Bio import SeqIO
 
@@ -11,7 +11,15 @@ import torch
 import argparse
 import time
 
-
+def to_numpy(x):
+    if hasattr(x, "cpu"):  # torch.Tensor
+        return x.cpu().numpy()
+    elif isinstance(x, dict):
+        return {k: to_numpy(v) for k, v in x.items()}
+    elif isinstance(x, (list, tuple)):
+        return type(x)(to_numpy(v) for v in x)
+    else:
+        return x
 
 def parse_output(output):
   pae = (output["aligned_confidence_probs"][0] * np.arange(64)).mean(-1) * 31
@@ -80,10 +88,11 @@ def runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles):
 
   pdb_str = actual_model.output_to_pdb(output)[0]
   
-  output = tree_map(lambda x: x.cpu().numpy(), output)
+  # output = tree_map(lambda x: x.cpu().numpy(), output)
+  output = to_numpy(output)
   ptm = output["ptm"][0]
   plddt = output["plddt"][0,...,1].mean()
-  O = parse_output(output)
+  # O = parse_output(output)
 
   output_text = f'{ID} ptm: {ptm:.3f} plddt: {plddt:.3f}'
   print(output_text)
