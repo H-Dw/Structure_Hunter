@@ -87,8 +87,9 @@ We used NgSignPDB as an example (processed by ESMFold prediction), the same proc
 
 ### 1. Signal Peptide Identification
 
-Run `SignalP 5.0` to identify proteins with signal peptides, extract their IDs, and separate sequences based on length (1250bp threshold).
+Run `SignalP 5.0` to identify proteins with signal peptides, extract their IDs, and separate sequences based on length (1250 aa threshold).
 
+NORE: Replace '${species}' as your species name (e.g. 'Ng'), and 'protein.faa' as your own proteome path.
 ```bash
 export species="Ng"
 
@@ -108,9 +109,9 @@ seqkit grep -f ${species}Sign.txt examples/protein.faa -o examples/${species}Sig
 cat examples/${species}Sign.pep.fasta | seqkit seq -m 1250 | seqkit stats
 
 # 5. Split sequences by length for resource optimization (optional)
-# > 1250bp (Long sequences)
+# > 1250 aa (Long sequences)
 seqkit seq -m 1250 -g examples/${species}Sign.pep.fasta > examples/${species}SignLL.pep.fasta
-# < 1250bp (Short sequences)
+# < 1250 aa (Short sequences)
 seqkit seq -M 1250 -g examples/${species}Sign.pep.fasta > examples/${species}Sign1250.pep.fa
 
 ```
@@ -119,13 +120,51 @@ seqkit seq -M 1250 -g examples/${species}Sign.pep.fasta > examples/${species}Sig
 
 Predict structures using ESMFold. Utilize GPU for shorter sequences and CPU for longer ones to avoid memory overflow.
 
-**On GPU Server (Length < 1250bp):**
-```bash
-# Could add '--device 2' if multiple GPUs are available
-nohup python scripts/runESMFold.py -i examples/${species}Sign1250.pep.fasta -o examples/${species}ESMFoldResult -gpu &
+**Usages**:
+
+*On single GPU Server:*
+``` bash
+python runESMFold.py \
+  --parallel_mode single \
+  -gpu --device 0 \
+  -i input.fasta -o out
 ```
 
-**On CPU Server (Length > 1250bp):**
+*On multi-GPU Server but limited by memory:*
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+python runESMFold.py \
+  --parallel_mode dp \
+  -gpu \
+  -i input.fasta -o out
+```
+
+*On multi-GPU Server with sufficient memory:*
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+torchrun --nproc_per_node=4 runESMFold.py \
+  --parallel_mode ddp \
+  -gpu \
+  -i input.fasta -o out
+```
+
+*On CPU Server:*
+```bash
+python runESMFold.py \
+  -cpu \
+  -i input.fasta -o out
+```
+
+
+**Run example:**
+
+***On GPU Server (Length < 1250bp):***
+```bash
+# Could add '--device 2' if multiple GPUs are available
+nohup python scripts/runESMFold.py -i examples/${species}Sign1250.pep.fasta -o examples/${species}ESMFoldResult -gpu --parallel_mode dp &
+```
+
+***On CPU Server (Length > 1250bp):***
 ```bash
 nohup python scripts/runESMFold.py -i examples/${species}LL.pep.fasta -o examples/${species}ESMFoldResult -cpu &
 ```

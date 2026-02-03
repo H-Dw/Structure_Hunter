@@ -1,191 +1,190 @@
-# Refer to https://colab.research.google.com/github/sokrypton/ColabFold/blob/main/ESMFold.ipynb
+# ================================
+#  ESMFold Parallel Research Template
+# ================================
 
-import re, os
+import os
+import re
+import time
+import argparse
 import numpy as np
+import torch
 import esm
-# from jax.tree_util import tree_map #pip install jax,jaxlib
-from scipy.special import softmax
+import torch.distributed as dist
 from Bio import SeqIO
 
-import torch
-import argparse
-import time
+# --------------------------------------------------
+# Utils
+# --------------------------------------------------
 
 def to_numpy(x):
-    if hasattr(x, "cpu"):  # torch.Tensor
+    if torch.is_tensor(x):
         return x.cpu().numpy()
-    elif isinstance(x, dict):
+    if isinstance(x, dict):
         return {k: to_numpy(v) for k, v in x.items()}
-    elif isinstance(x, (list, tuple)):
+    if isinstance(x, (list, tuple)):
         return type(x)(to_numpy(v) for v in x)
+    return x
+
+
+def sanitize_sequence(seq):
+    seq = re.sub("[^A-Z:]", "", seq.replace("/", ":").upper())
+    seq = re.sub(":+", ":", seq)
+    return seq.strip(":")
+
+
+# --------------------------------------------------
+# Parallel setup
+# --------------------------------------------------
+
+def setup_parallel(args):
+    """
+    Returns:
+        parallel_mode
+        device (for single / ddp) OR device_ids (for dp)
+        rank, world_size (ddp only)
+    """
+    if args.cpu:
+        return "cpu", None, 0, 1
+
+    if args.parallel_mode == "ddp":
+        dist.init_process_group(backend="nccl")
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+        return "ddp", device, rank, world_size
+
+    # single / dp
+    if args.device:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.device
+
+    assert torch.cuda.is_available(), "CUDA not available"
+    n = torch.cuda.device_count()
+    device_ids = list(range(n))
+    return args.parallel_mode, device_ids, 0, 1
+
+
+# --------------------------------------------------
+# Model builder
+# --------------------------------------------------
+
+def build_model(parallel_mode, device_or_ids, seq_length):
+    base_model = esm.pretrained.esmfold_v1().eval()
+
+    if parallel_mode == "single":
+        model = base_model.to("cuda:0")
+
+    elif parallel_mode == "dp":
+        assert len(device_or_ids) > 1, "DP requires multiple GPUs"
+        base_model = base_model.to("cuda:0")
+        model = torch.nn.DataParallel(
+            base_model,
+            device_ids=device_or_ids,
+            output_device=0
+        ).module
+
+    elif parallel_mode == "ddp":
+        model = base_model.to(device_or_ids)
+
     else:
-        return x
+        raise ValueError(f"Unknown parallel_mode {parallel_mode}")
 
-def parse_output(output):
-  pae = (output["aligned_confidence_probs"][0] * np.arange(64)).mean(-1) * 31
-  plddt = output["plddt"][0,:,1]
-
-  bins = np.append(0,np.linspace(2.3125,21.6875,63))
-  sm_contacts = softmax(output["distogram_logits"],-1)[0]
-  sm_contacts = sm_contacts[...,bins<8].sum(-1)
-  xyz = output["positions"][-1,0,:,1]
-  mask = output["atom37_atom_exists"][0,:,1] == 1
-  o = {"pae":pae[mask,:][:,mask],
-       "plddt":plddt[mask],
-       "sm_contacts":sm_contacts[mask,:][:,mask],
-       "xyz":xyz[mask]}
-  return o
-
-def runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles):
-  jobname = re.sub(r'\W+', '', jobname)[:50]
-  sequence = re.sub("[^A-Z:]", "", sequence.replace("/",":").upper())
-  sequence = re.sub(":+",":",sequence)
-  sequence = re.sub("^[:]+","",sequence)
-  sequence = re.sub("[:]+$","",sequence)
-  copies = 1 #@param {type:"integer"}
-  if copies == "" or copies <= 0: copies = 1
-  sequence = ":".join([sequence] * copies)
-  num_recycles = recycles
-  chain_linker = 25
-
-  ID = jobname
-  seqs = sequence.split(":")
-  lengths = [len(s) for s in seqs]
-  length = sum(lengths)
-  print("length",length)
-
-  u_seqs = list(set(seqs))
-  if len(seqs) == 1: mode = "mono"
-  elif len(u_seqs) == 1: mode = "homo"
-  else: mode = "hetero"
-
-  if deviceC == "cpu":
-    model = esm.pretrained.esmfold_v1()
-    model = model.float()
-    model = model.eval().to("cpu")
-    actual_model = model
-  else: 
-    #nvidia-smi
-    model = torch.nn.DataParallel(esm.pretrained.esmfold_v1(), device_ids=device_ids)
-    model = model.eval().cuda()
-
-    # model.module.set_chunk_size(128)
-    # optimized for different GPU 128, 64, 32
-    if length > 1100:
-      model.module.set_chunk_size(64) 
-      if length > 1250:
-        model.module.set_chunk_size(32)
+    # chunk size strategy (critical for long sequences)
+    if seq_length > 1100:
+        model.set_chunk_size(64)
+        if seq_length > 1250:
+            model.set_chunk_size(32)
     else:
-      model.module.set_chunk_size(128)
+        model.set_chunk_size(128)
 
-    actual_model = model.module
-
-  with torch.no_grad():
-    output = actual_model.infer(sequence,
-                        num_recycles=num_recycles,
-                        chain_linker="X"*chain_linker,
-                        residue_index_offset=512)
-
-  pdb_str = actual_model.output_to_pdb(output)[0]
-  
-  # output = tree_map(lambda x: x.cpu().numpy(), output)
-  output = to_numpy(output)
-  ptm = output["ptm"][0]
-  plddt = output["plddt"][0,...,1].mean()
-  # O = parse_output(output)
-
-  output_text = f'{ID} ptm: {ptm:.3f} plddt: {plddt:.3f}'
-  print(output_text)
-  outputfile = f"{store_folder}/output.txt"
-  
-  with open(f"{outputfile}", "a") as file:
-    file.write(output_text + "\n")
-  # print(f'ptm: {ptm:.3f} plddt: {plddt:.3f}') # before1017
+    return model
 
 
-  prefix = f"{store_folder}/{ID}"
-  with open(f"{prefix}.pdb","w") as out:
-    out.write(pdb_str)
+# --------------------------------------------------
+# ESMFold inference
+# --------------------------------------------------
+
+def run_esmfold(jobname, sequence, model, device, out_dir, recycles):
+    with torch.no_grad():
+        output = model.infer(
+            sequence,
+            num_recycles=recycles,
+            chain_linker="X" * 25,
+            residue_index_offset=512
+        )
+
+    pdb = model.output_to_pdb(output)[0]
+    output = to_numpy(output)
+
+    ptm = output["ptm"][0]
+    plddt = output["plddt"][0, ..., 1].mean()
+
+    with open(os.path.join(out_dir, f"{jobname}.pdb"), "w") as f:
+        f.write(pdb)
+
+    with open(os.path.join(out_dir, "output.txt"), "a") as f:
+        f.write(f"{jobname} ptm:{ptm:.3f} plddt:{plddt:.3f}\n")
+
+
+# --------------------------------------------------
+# Main
+# --------------------------------------------------
 
 def main(args):
-  if args.cpu:
-      deviceC = "cpu"
-      device_ids = []
-  elif args.gpu:
-      if args.device:
-          device_ids = [int(id) for id in args.device.split(',')]
-          gpus = torch.cuda.is_available()
-          if gpus:
-              torch.device('cuda')
-              # print("length of input sequence must less than ~1270bp ")
-              deviceC = "gpu"
-          else:
-              print("No GPU devices available.")
-      else:
-        torch.device('cuda')
-        deviceC = "gpu"
-        device_ids = [int(1)]
-        print("Calculated on GPU 1 (default) when using GPU.")
-  else:
-    print("Use CPU as default.")
-    deviceC = "cpu"
-    device_ids = []
+    parallel_mode, dev, rank, world_size = setup_parallel(args)
 
-            
-  fasta_file_name = args.fasta_file
-  print("Fasta file input:\n", fasta_file_name)
+    if rank == 0:
+        os.makedirs(args.store_folder, exist_ok=True)
 
-  store_folder = args.store_folder
-  if store_folder.endswith("/"):
-    re.sub(r".$", "",store_folder)
+    if parallel_mode == "ddp":
+        dist.barrier()
 
-  if os.path.exists(store_folder):
-    print("output folder:\n", store_folder)
-  else:
-    os.makedirs(store_folder)
-    print("creat output folder:\n", store_folder)
+    records = [(r.id, sanitize_sequence(str(r.seq)))
+               for r in SeqIO.parse(args.fasta_file, "fasta")]
+    records.sort(key=lambda x: len(x[1]))
 
-  sequences = []
-  jobnames = []
+    # DDP sharding
+    if parallel_mode == "ddp":
+        records = records[rank::world_size]
 
-  for record in SeqIO.parse(fasta_file_name, "fasta"):
-    jobnames.append(record.id)
-    sequences.append(str(record.seq))
+    recycles = args.recycles if args.recycles is not None else 3
 
-  sorted_sequences = sorted(zip(jobnames, sequences), key=lambda x: len(x[1]))
+    for jobname, seq in records:
+        length = len(seq.replace(":", ""))
+        model = build_model(parallel_mode, dev, length)
+        run_esmfold(jobname, seq, model,
+                    dev if parallel_mode == "ddp" else None,
+                    args.store_folder, recycles)
 
-  if args.recycles:
-    recycles = args.recycles
-  else:
-    print("Use num_recycles = 3 as default.")
-    recycles = 3
+    if parallel_mode == "ddp":
+        dist.barrier()
+        if rank == 0:
+            print("All jobs finished.")
 
-  for jobname, sequence in sorted_sequences:
-    try:
-      runESMFold(jobname, sequence, deviceC, device_ids, store_folder, recycles)
-    except Exception as e:
-      print(f"Error occurred while processing {jobname}: {e}")
 
+# --------------------------------------------------
+# Entry
+# --------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser("ESMFold Parallel Template")
 
-  time_start = time.time()
+    parser.add_argument("-i", dest="fasta_file", required=True)
+    parser.add_argument("-o", dest="store_folder", required=True)
 
-  parser = argparse.ArgumentParser(description='ESMFold Script')
+    parser.add_argument("-cpu", action="store_true")
+    parser.add_argument("-gpu", action="store_true")
 
-  parser.add_argument('-i', dest='fasta_file', type=str, help='Path to FASTA file')
-  parser.add_argument('-o', dest='store_folder', type=str, help='Path to store file')  
-  parser.add_argument('-cpu', action='store_true', help='Run on CPU only')
-  parser.add_argument("-gpu", action="store_true", help="Use GPU for computation")
-  parser.add_argument("--device", type=str, help="Comma-separated list of GPU device IDs (command: nvidia-smi)")
-  parser.add_argument("-recycles", type=int, help="Set the num_recycles (default: 3)")
+    parser.add_argument("--device", type=str,
+                        help="Physical GPU ids, e.g. 0,1,2")
 
-  args = parser.parse_args()
-  main(args)
+    parser.add_argument("--parallel_mode", type=str, default="single",
+                        choices=["single", "dp", "ddp"])
 
-  time_end = time.time()
-  time_sum = time_end - time_start
-  minutes = int(time_sum // 60)
-  seconds = int(time_sum % 60)
-  milliseconds = int((time_sum - int(time_sum)) * 1000)
-  print(f"Runing time：{minutes} min {seconds} s {milliseconds} ms")
+    parser.add_argument("-recycles", type=int)
+
+    args = parser.parse_args()
+    t0 = time.time()
+    main(args)
+    print(f"Total time: {time.time() - t0:.1f}s")
