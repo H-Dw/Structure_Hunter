@@ -85,6 +85,11 @@ OR you can modify the running command by adding 'bin' path of signalp, likes:
 
 We used NgSignPDB as an example (processed by ESMFold prediction), the same process can be applied to EcSignPDB, McSignPDB, and NmSignPDB.
 
+NOTE: Please activate conda env in advance.
+```bash
+conda activate hunter
+```
+
 ### 1. Signal Peptide Identification
 
 Run `SignalP 5.0` to identify proteins with signal peptides, extract their IDs, and separate sequences based on length (1250 aa threshold).
